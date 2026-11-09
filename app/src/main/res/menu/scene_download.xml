@@ -200,4 +200,14 @@
         android:title="@string/import_local_album"
         app:showAsAction="never"/>
 
+    <item
+        android:id="@+id/open_pdf"
+        android:title="@string/open_pdf"
+        app:showAsAction="never"/>
+
+    <item
+        android:id="@+id/private_pdf"
+        android:title="@string/private_pdf_title"
+        app:showAsAction="never"/>
+
 </menu>

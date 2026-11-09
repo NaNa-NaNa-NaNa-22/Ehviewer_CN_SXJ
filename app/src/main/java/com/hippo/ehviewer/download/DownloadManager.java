@@ -123,9 +123,15 @@ public class DownloadManager implements SpiderQueen.OnSpiderListener {
         for (int i = 0, n = allInfoList.size(); i < n; i++) {
             DownloadInfo info = allInfoList.get(i);
 
-            if (info.archiveUri != null && info.archiveUri.startsWith("content://")) {
+            // 本地相册存的是 "local-album:content://.../tree/..."，先把前缀剥掉
+            String persistUri = info.archiveUri;
+            if (persistUri != null && persistUri.startsWith("local-album:")) {
+                persistUri = persistUri.substring("local-album:".length());
+            }
+
+            if (persistUri != null && persistUri.startsWith("content://")) {
                 try {
-                    Uri uri = Uri.parse(info.archiveUri);
+                    Uri uri = Uri.parse(persistUri);
                     mContext.getContentResolver().takePersistableUriPermission(uri,
                             Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception e) {

@@ -99,6 +99,20 @@
         <item>1</item>
     </string-array>
 
+    <string-array name="download_list_thumb_size_entries" translatable="false">
+        <item>@string/settings_download_list_thumb_size_compact</item>
+        <item>@string/settings_download_list_thumb_size_small</item>
+        <item>@string/settings_download_list_thumb_size_medium</item>
+        <item>@string/settings_download_list_thumb_size_large</item>
+    </string-array>
+
+    <string-array name="download_list_thumb_size_entry_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+    </string-array>
+
     <string-array name="thumb_size_entries" translatable="false">
         <item>@string/settings_eh_thumb_size_large</item>
         <item>@string/settings_eh_thumb_size_middle</item>
@@ -412,7 +426,7 @@
 
     <string-array name="update_metadata">
         <item>update_json</item>
-        <item>https://raw.githubusercontent.com/xiaojieonly/Ehviewer_CN_SXJ/refs/heads/BiLi_PC_Gamer/feedauthor/update.json</item>
+        <item>https://raw.githubusercontent.com/NaNa-NaNa-NaNa-22/Ehviewer_CN_SXJ/refs/heads/BiLi_PC_Gamer/feedauthor/update.json</item>
     </string-array>
 
 

@@ -58,7 +58,7 @@
     <string name="settings_eh_system_theme">系统主题</string>
 
 
-    <string name="app_name">EhViewer</string>
+    <string name="app_name">CustomViewer</string>
 
     <string name="site_e" translatable="false">e-hentai</string>
     <string name="site_ex" translatable="false">exhentai</string>
@@ -168,6 +168,10 @@
     <string name="error_not_folder_path">Not folder path</string>
     <string name="error_no_provider">No provider</string>
     <string name="error_decoding_failed">Decoding failed</string>
+    <string name="pdf_open_failed">Unable to open PDF</string>
+    <string name="pdf_encrypted">This PDF is encrypted or password-protected</string>
+    <string name="pdf_no_pages">This PDF has no pages</string>
+    <string name="pdf_render_failed">Failed to render PDF page</string>
     <string name="error_not_found">Not found</string>
     <string name="error_empty">Empty</string>
     <string name="error_invalid_archive">Invalid archive</string>
@@ -692,6 +696,12 @@
     <string name="settings_download_media_scan">Allow media scan</string>
     <string name="settings_download_media_scan_summary_on">Please hide your gallery apps away from other people</string>
     <string name="settings_download_media_scan_summary_off">Most gallery apps will ignore pictures in the download path</string>
+    <string name="settings_download_list_thumb_size">Download item size</string>
+    <string name="settings_download_list_thumb_size_summary">Compact hides thumbnails; small/medium/large adjust item height</string>
+    <string name="settings_download_list_thumb_size_compact">Compact (no thumbnail)</string>
+    <string name="settings_download_list_thumb_size_small">Small</string>
+    <string name="settings_download_list_thumb_size_medium">Medium</string>
+    <string name="settings_download_list_thumb_size_large">Large</string>
     <string name="settings_download_multi_thread_download">Multi-threaded download</string>
     <string name="settings_download_multi_thread_download_summary">Up to %s images</string>
     <string name="settings_download_preload_image">Preload image</string>
@@ -702,6 +712,8 @@
     <string name="settings_download_download_origin_image">Download original image</string>
     <string name="settings_download_download_list_pagination">Pagination List</string>
     <string name="settings_download_download_list_pagination_summary">The paging function will only take effect when the list length is greater than 500</string>
+    <string name="settings_download_drag_to_reorder">Long-press to drag and reorder</string>
+    <string name="settings_download_drag_to_reorder_summary">Long-press a download and drag it to change its position. When off, long-press enters multi-select mode.</string>
     <string name="settings_download_download_origin_image_summary">It is dangerous! You may get 509 error</string>
     <string name="settings_download_download_order_by_asc">Download order by asc</string>
     <string name="settings_download_download_order_by_asc_summary">Download in sequence when downloading all galleries</string>
@@ -1087,6 +1099,19 @@
     <string name="imported_archive_info_message">This is an item imported from local storage</string>
     <string name="imported_archive_category">Local Import</string>
     <string name="import_local_album">Import local album</string>
+    <string name="open_pdf">Open PDF</string>
+    <string name="private_pdf_title">Private PDFs</string>
+    <string name="private_pdf_category">PDF</string>
+    <string name="private_pdf_import">Import PDFs</string>
+    <string name="private_pdf_export_all">Export all</string>
+    <string name="private_pdf_empty">No private PDFs yet.\n\nTap “Import PDFs” to move PDFs into app-private storage. System documents and gallery apps cannot see them.</string>
+    <string name="private_pdf_moving">Moving %1$d/%2$d: %3$s</string>
+    <string name="private_pdf_moved">Moved %1$d PDFs. Failed: %2$d, original kept: %3$d.</string>
+    <string name="private_pdf_exported">Exported %1$d PDFs. Failed: %2$d, private copy kept: %3$d.</string>
+    <string name="private_pdf_export">Export (move out)</string>
+    <string name="private_pdf_delete">Delete</string>
+    <string name="private_pdf_delete_confirm">Delete “%s” from private storage?</string>
+    <string name="private_pdf_export_failed">Unable to export PDF</string>
     <string name="import_album_title">Select image folder</string>
     <string name="import_album_processing">Importing album…</string>
     <string name="import_album_failed">Failed to import album</string>

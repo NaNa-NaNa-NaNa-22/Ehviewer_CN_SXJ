@@ -16,7 +16,7 @@
 
 <resources>
 
-    <string name="app_name">EhViewer</string>
+    <string name="app_name">CustomViewer</string>
 
     <!-- Theme -->
     <string name="theme_light">亮色主题</string>
@@ -83,6 +83,10 @@
     <string name="error_not_folder_path">非文件夹路径</string>
     <string name="error_no_provider">无 provider</string>
     <string name="error_decoding_failed">解码失败</string>
+    <string name="pdf_open_failed">无法打开 PDF</string>
+    <string name="pdf_encrypted">这个 PDF 已加密或需要密码</string>
+    <string name="pdf_no_pages">这个 PDF 没有页面</string>
+    <string name="pdf_render_failed">PDF 页面渲染失败</string>
     <string name="error_not_found">未找到</string>
     <string name="error_empty">空</string>
     <string name="error_invalid_archive">无效的压缩包</string>
@@ -611,6 +615,8 @@
     <string name="settings_download_download_origin_image">下载原图</string>
     <string name="settings_download_download_list_pagination">列表分页</string>
     <string name="settings_download_download_list_pagination_summary">在列表长度大于500时分页功能才会生效</string>
+    <string name="settings_download_drag_to_reorder">长按拖动排序</string>
+    <string name="settings_download_drag_to_reorder_summary">长按下载项并拖动可调整顺序；关闭后长按进入多选模式。</string>
     <string name="settings_download_download_origin_image_summary">这很危险！勾选此项会导致下载配额与GP迅速流失</string>
     <string name="settings_download_download_order_by_asc">正序下载</string>
     <string name="settings_download_download_order_by_asc_summary">下载全部画廊时正序下载</string>
@@ -619,6 +625,12 @@
     <string name="settings_download_media_scan">允许媒体扫描</string>
     <string name="settings_download_media_scan_summary_on">请避免他人翻看你的图库应用</string>
     <string name="settings_download_media_scan_summary_off">大多数图库应用将不会显示下载目录中的图片</string>
+    <string name="settings_download_list_thumb_size">下载项大小</string>
+    <string name="settings_download_list_thumb_size_summary">紧凑模式不显示缩略图；小/中/大调整每项高度</string>
+    <string name="settings_download_list_thumb_size_compact">紧凑（不显示缩略图）</string>
+    <string name="settings_download_list_thumb_size_small">小</string>
+    <string name="settings_download_list_thumb_size_medium">中</string>
+    <string name="settings_download_list_thumb_size_large">大</string>
     <string name="settings_download_restore_download_items">恢复下载项</string>
     <string name="settings_download_restore_download_items_summary">恢复下载目录里的所有下载项</string>
     <string name="settings_download_restoring">恢复中</string>
@@ -999,6 +1011,19 @@
     <string name="imported_archive_info_message">这是从本地存储中导入的项目</string>
     <string name="imported_archive_category">本地导入</string>
     <string name="import_local_album">导入本地相册</string>
+    <string name="open_pdf">打开 PDF</string>
+    <string name="private_pdf_title">私有 PDF</string>
+    <string name="private_pdf_category">PDF</string>
+    <string name="private_pdf_import">导入 PDF</string>
+    <string name="private_pdf_export_all">全部导出</string>
+    <string name="private_pdf_empty">还没有私有 PDF。\n\n点“导入 PDF”把文件移进 App 私有存储；系统文档和相册都看不到。</string>
+    <string name="private_pdf_moving">正在移动 %1$d/%2$d：%3$s</string>
+    <string name="private_pdf_moved">已移动 %1$d 个 PDF。失败 %2$d 个，原文件保留 %3$d 个。</string>
+    <string name="private_pdf_exported">已导出 %1$d 个 PDF。失败 %2$d 个，私有副本保留 %3$d 个。</string>
+    <string name="private_pdf_export">导出（移出）</string>
+    <string name="private_pdf_delete">删除</string>
+    <string name="private_pdf_delete_confirm">从私有空间删除“%s”？</string>
+    <string name="private_pdf_export_failed">导出 PDF 失败</string>
     <string name="import_album_title">选择图片文件夹</string>
     <string name="import_album_processing">正在导入相册…</string>
     <string name="import_album_failed">相册导入失败</string>

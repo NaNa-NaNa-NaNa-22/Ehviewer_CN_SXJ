@@ -76,6 +76,8 @@ import com.hippo.ehviewer.gallery.ArchiveGalleryProvider;
 import com.hippo.ehviewer.gallery.DirGalleryProvider;
 import com.hippo.ehviewer.gallery.EhGalleryProvider;
 import com.hippo.ehviewer.gallery.GalleryProvider2;
+import com.hippo.ehviewer.gallery.LocalAlbumGalleryProvider;
+import com.hippo.ehviewer.gallery.PdfGalleryProvider;
 import com.hippo.ehviewer.widget.GalleryGuideView;
 import com.hippo.ehviewer.widget.GalleryHeader;
 import com.hippo.ehviewer.widget.ReversibleSeekBar;
@@ -106,6 +108,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -118,6 +121,12 @@ public class GalleryActivity extends EhActivity implements SeekBar.OnSeekBarChan
 
     public static final String ACTION_DIR = "dir";
     public static final String ACTION_EH = "eh";
+    /** 直接用 SAF 目录树（content://.../tree/...）作为画廊数据源，不复制文件。 */
+    public static final String ACTION_LOCAL_ALBUM = "local_album";
+
+    /** 用系统 PdfRenderer 按页浏览 PDF。 */
+    public static final String ACTION_PDF = "pdf";
+    public static final String KEY_PDF_PATH = "pdf_path";
 
     public static final String KEY_ACTION = "action";
     public static final String KEY_FILENAME = "filename";
@@ -134,6 +143,7 @@ public class GalleryActivity extends EhActivity implements SeekBar.OnSeekBarChan
 
     private String mAction;
     private String mFilename;
+    private String mPdfPath;
     private Uri mUri;
     private GalleryInfo mGalleryInfo;
     private int mPage;
@@ -256,12 +266,45 @@ public class GalleryActivity extends EhActivity implements SeekBar.OnSeekBarChan
             if (mGalleryInfo != null) {
                 mGalleryProvider = new EhGalleryProvider(this, mGalleryInfo);
             }
+        } else if (ACTION_LOCAL_ALBUM.equals(mAction)) {
+            if (mUri != null) {
+                // mUri 是 SAF 目录树 URI（content://.../tree/...），直接引用，不复制
+                UniFile dir = UniFile.fromTreeUri(this, mUri);
+                if (dir != null && dir.isDirectory()) {
+                    mGalleryProvider = new LocalAlbumGalleryProvider(dir);
+                }
+            }
+            if (mGalleryProvider == null) {
+                Toast.makeText(this, R.string.archive_not_accessible, Toast.LENGTH_SHORT).show();
+            }
+        } else if (ACTION_PDF.equals(mAction)) {
+            if (mPdfPath != null) {
+                mGalleryProvider = new PdfGalleryProvider(this, new File(mPdfPath));
+            } else if (mUri != null) {
+                mGalleryProvider = new PdfGalleryProvider(this, mUri);
+            }
         } else if (Intent.ACTION_VIEW.equals(mAction)) {
             if (mUri != null) {
-                // Only support zip now
-                mGalleryProvider = new ArchiveGalleryProvider(this, mUri);
+                if (isPdfUri(mUri)) {
+                    mGalleryProvider = new PdfGalleryProvider(this, mUri);
+                } else {
+                    mGalleryProvider = new ArchiveGalleryProvider(this, mUri);
+                }
             }
         }
+    }
+
+    private boolean isPdfUri(@NonNull Uri uri) {
+        try {
+            String type = getContentResolver().getType(uri);
+            if ("application/pdf".equalsIgnoreCase(type)) {
+                return true;
+            }
+        } catch (Exception e) {
+            // Ignore, fall back to path check
+        }
+        String path = uri.getPath();
+        return path != null && path.toLowerCase(Locale.US).endsWith(".pdf");
     }
 
     /**
@@ -289,6 +332,7 @@ public class GalleryActivity extends EhActivity implements SeekBar.OnSeekBarChan
 
         mAction = intent.getAction();
         mFilename = intent.getStringExtra(KEY_FILENAME);
+        mPdfPath = intent.getStringExtra(KEY_PDF_PATH);
         mUri = intent.getData();
         mGalleryInfo = intent.getParcelableExtra(KEY_GALLERY_INFO);
         boolean onEvent = intent.getBooleanExtra(DATA_IN_EVENT, false);
@@ -302,6 +346,7 @@ public class GalleryActivity extends EhActivity implements SeekBar.OnSeekBarChan
     private void onRestore(@NonNull Bundle savedInstanceState) {
         mAction = savedInstanceState.getString(KEY_ACTION);
         mFilename = savedInstanceState.getString(KEY_FILENAME);
+        mPdfPath = savedInstanceState.getString(KEY_PDF_PATH);
         mUri = savedInstanceState.getParcelable(KEY_URI);
         mGalleryInfo = savedInstanceState.getParcelable(KEY_GALLERY_INFO);
         mPage = savedInstanceState.getInt(KEY_PAGE, -1);
@@ -314,6 +359,7 @@ public class GalleryActivity extends EhActivity implements SeekBar.OnSeekBarChan
         super.onSaveInstanceState(outState);
         outState.putString(KEY_ACTION, mAction);
         outState.putString(KEY_FILENAME, mFilename);
+        outState.putString(KEY_PDF_PATH, mPdfPath);
         outState.putParcelable(KEY_URI, mUri);
         if (mGalleryInfo != null) {
             outState.putParcelable(KEY_GALLERY_INFO, mGalleryInfo);

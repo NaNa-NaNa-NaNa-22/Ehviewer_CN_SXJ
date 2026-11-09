@@ -17,3 +17,9 @@ gradle/wrapper/gradle-wrapper.properties
 /download/00000006.gif
 open_source_licenses.html
 /.vscode/settings.json
+
+# 签名相关：绝不提交真实密钥
+keystore.properties
+*.jks
+*.keystore
+release.jks

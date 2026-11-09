@@ -100,6 +100,70 @@ final class DocumentsContractApi21 {
         return results.toArray(new Uri[results.size()]);
     }
 
+    /**
+     * 一次 query 同时取回 document id、显示名和 MIME 类型。
+     *
+     * <p>原来的 {@link #listFiles(Context, Uri)} 只取 id，调用方随后还要对每个子项分别
+     * 调用 {@code getName()} 和 {@code isDirectory()}，在 SAF provider 上就是每文件两次
+     * 额外的 ContentResolver IPC。大目录（几千张图）会因此慢到无法接受。
+     *
+     * @return null 表示该 provider 不支持这组 projection 或查询失败，调用方应回退到
+     *         {@link #listFiles(Context, Uri)}；空数组表示目录确实为空。
+     */
+    public static DocumentInfo[] listFilesWithInfo(Context context, Uri self) {
+        final ContentResolver resolver = context.getContentResolver();
+        final Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(self,
+                DocumentsContract.getDocumentId(self));
+        final ArrayList<DocumentInfo> results = new ArrayList<>();
+
+        Cursor c = null;
+        try {
+            c = resolver.query(childrenUri, new String[]{
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null);
+            if (null != c) {
+                final int idIndex = c.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
+                final int nameIndex = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
+                final int typeIndex = c.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
+                if (idIndex < 0) {
+                    return null;
+                }
+                while (c.moveToNext()) {
+                    final String documentId = c.getString(idIndex);
+                    if (documentId == null) {
+                        continue;
+                    }
+                    final Uri documentUri = DocumentsContract.buildDocumentUriUsingTree(self,
+                            documentId);
+                    final String displayName = nameIndex >= 0 ? c.getString(nameIndex) : null;
+                    final String mimeType = typeIndex >= 0 ? c.getString(typeIndex) : null;
+                    results.add(new DocumentInfo(documentUri, displayName, mimeType));
+                }
+            }
+        } catch (Throwable e) {
+            Utils.throwIfFatal(e);
+            Log.e(TAG, "Failed listFilesWithInfo: " + self, e);
+            return null;
+        } finally {
+            Utils.closeQuietly(c);
+        }
+
+        return results.toArray(new DocumentInfo[results.size()]);
+    }
+
+    static final class DocumentInfo {
+        final Uri uri;
+        final String displayName;
+        final String mimeType;
+
+        DocumentInfo(Uri uri, String displayName, String mimeType) {
+            this.uri = uri;
+            this.displayName = displayName;
+            this.mimeType = mimeType;
+        }
+    }
+
     public static Uri renameTo(Context context, Uri self, String displayName) {
         try {
             return DocumentsContract.renameDocument(context.getContentResolver(), self, displayName);

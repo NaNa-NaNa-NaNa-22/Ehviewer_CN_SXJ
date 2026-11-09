@@ -21,11 +21,15 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.ColorDrawable
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.util.Log
+import android.util.LruCache
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -52,10 +56,12 @@ import com.hippo.ehviewer.download.DownloadManager
 import com.hippo.ehviewer.download.DownloadService
 import com.hippo.ehviewer.gallery.A7ZipArchive
 import com.hippo.ehviewer.gallery.A7ZipArchive.A7ZipArchiveEntry
+import com.hippo.ehviewer.gallery.GalleryProvider2
 import com.hippo.ehviewer.gallery.Pipe
 import com.hippo.ehviewer.spider.SpiderDen
 import com.hippo.ehviewer.spider.SpiderInfo
 import com.hippo.ehviewer.ui.scene.TransitionNameFactory
+import com.hippo.ehviewer.ui.GalleryActivity
 import com.hippo.ehviewer.ui.scene.download.DownloadsScene
 import com.hippo.ehviewer.ui.scene.download.part.DownloadAdapter.DownloadHolder
 import com.hippo.ehviewer.ui.scene.gallery.detail.GalleryDetailScene
@@ -70,8 +76,10 @@ import com.hippo.unifile.UniFile
 import com.hippo.unifile.UniRandomAccessFile
 import com.hippo.util.NaturalComparator
 import com.hippo.widget.LoadImageView
+import java.io.File
 import java.util.Collections
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.min
 import androidx.core.graphics.drawable.toDrawable
 
@@ -82,8 +90,7 @@ import androidx.core.graphics.drawable.toDrawable
 class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) :
     RecyclerView.Adapter<DownloadHolder?>(), DraggableItemAdapter<DownloadHolder?> {
     private val mInflater: LayoutInflater
-    private val mListThumbWidth: Int
-    private val mListThumbHeight: Int
+    private val mBaseThumbHeight: Int
     private val mScene: DownloadsScene
     private val mCallback: DownloadAdapterCallback
 
@@ -144,8 +151,30 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
 
         val calculator = mInflater.inflate(R.layout.item_gallery_list_thumb_height, null)
         ViewUtils.measureView(calculator, 1024, ViewGroup.LayoutParams.WRAP_CONTENT)
-        mListThumbHeight = calculator.measuredHeight
-        mListThumbWidth = mListThumbHeight * 2 / 3
+        mBaseThumbHeight = calculator.measuredHeight
+    }
+
+    private fun getThumbHeight(): Int {
+        val scale = when (Settings.getDownloadListThumbSize()) {
+            1 -> 0.65f
+            3 -> 1.35f
+            else -> 1.0f
+        }
+        return (mBaseThumbHeight * scale).toInt().coerceAtLeast(1)
+    }
+
+    private fun applyThumbSize(holder: DownloadHolder) {
+        if (holder.thumb.visibility == View.GONE) {
+            return
+        }
+        val height = getThumbHeight()
+        val width = height * 2 / 3
+        val lp = holder.thumb.layoutParams
+        if (lp.width != width || lp.height != height) {
+            lp.width = width
+            lp.height = height
+            holder.thumb.layoutParams = lp
+        }
     }
 
     override fun getItemId(position: Int): Long {
@@ -157,14 +186,14 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
         return list.get(posInList).gid
     }
 
+    override fun getItemViewType(position: Int): Int {
+        return if (Settings.getDownloadListThumbSize() == 0) 1 else 0
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DownloadHolder {
-        val holder = DownloadHolder(mInflater.inflate(R.layout.item_download, parent, false))
-
-        val lp = holder.thumb.layoutParams
-        lp.width = mListThumbWidth
-        lp.height = mListThumbHeight
-        holder.thumb.setLayoutParams(lp)
-
+        val layout = if (viewType == 1) R.layout.item_download_compact else R.layout.item_download
+        val holder = DownloadHolder(mInflater.inflate(layout, parent, false))
+        applyThumbSize(holder)
         return holder
     }
 
@@ -172,33 +201,50 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
         val list = mCallback.list ?: return
 
         try {
+            applyThumbSize(holder)
             val pos = mCallback.positionInList(position)
             val info = list.get(pos)
+            val compact = holder.thumb.visibility == View.GONE
+            val small = Settings.getDownloadListThumbSize() == 1
+            holder.title.maxLines = if (small) 1 else 2
 
             var title = getSuitableTitle(info)
             val importedArchive = isImportedArchive(info)
             val localAlbum = DownloadAlbumImporter.isLocalAlbum(info)
+            val privatePdf = PrivatePdfController.isPrivatePdf(info)
             val localImport = importedArchive || localAlbum
             // Add special prefix for imported archives
-            if (importedArchive) {
+            if (privatePdf) {
+                title = "📄 $title"
+            } else if (importedArchive) {
                 title = "📦 $title"
             } else if (localAlbum) {
                 title = "📁 $title"
             }
             // Handle thumbnail loading for imported archives
-            if (importedArchive) {
-                holder.thumb.setTag(R.id.thumb, null)
-                // For imported archives, extract first image as thumbnail
-                loadArchiveThumbnail(holder.thumb, Uri.parse(info.archiveUri))
-            } else if (localAlbum) {
-                loadLocalAlbumThumbnail(holder.thumb, info)
-            } else {
-                holder.thumb.setTag(R.id.thumb, null)
-                // Normal thumbnail loading for regular downloads
-                holder.thumb.load(
-                    EhCacheKeyFactory.getThumbKey(info.gid), info.thumb,
-                    ThumbDataContainer(info), true, false
-                )
+            if (!compact) {
+                if (privatePdf) {
+                    val pdfFile = PrivatePdfController.getPrivatePdfFile(mScene.getEHContext(), info)
+                    if (pdfFile != null) {
+                        loadPdfThumbnail(holder.thumb, pdfFile)
+                    } else {
+                        holder.thumb.setTag(R.id.thumb, null)
+                        holder.thumb.load(R.drawable.v_book_open_x24)
+                    }
+                } else if (importedArchive) {
+                    holder.thumb.setTag(R.id.thumb, null)
+                    // For imported archives, extract first image as thumbnail
+                    loadArchiveThumbnail(holder.thumb, Uri.parse(info.archiveUri))
+                } else if (localAlbum) {
+                    loadLocalAlbumThumbnail(holder.thumb, info)
+                } else {
+                    holder.thumb.setTag(R.id.thumb, null)
+                    // Normal thumbnail loading for regular downloads
+                    holder.thumb.load(
+                        EhCacheKeyFactory.getThumbKey(info.gid), info.thumb,
+                        ThumbDataContainer(info), true, false
+                    )
+                }
             }
 
 
@@ -207,12 +253,17 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
             holder.uploader.text = info.uploader
 
             // Handle rating display for imported archives
-            if (localImport) {
-                // For imported archives, show 5 stars or hide rating
-                holder.rating.rating = 5.0f
+            if (privatePdf || compact || small) {
+                holder.rating.visibility = View.GONE
             } else {
-                // For normal downloads, show actual rating
-                holder.rating.rating = info.rating
+                holder.rating.visibility = View.VISIBLE
+                if (localImport) {
+                    // For imported archives, show 5 stars or hide rating
+                    holder.rating.rating = 5.0f
+                } else {
+                    // For normal downloads, show actual rating
+                    holder.rating.rating = info.rating
+                }
             }
 
             val spiderInfo = mCallback.spiderInfoMap!![info.gid]
@@ -221,13 +272,18 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
                 val startPage = spiderInfo.startPage + 1
                 val readText = startPage.toString() + "/" + spiderInfo.pages
                 holder.readProgress.text = readText
+            } else {
+                holder.readProgress.text = ""
             }
 
             val category = holder.category
             val newCategoryText: String?
             val categoryColor: Int
             // Special handling for imported archives - prioritize archiveUri over category field
-            if (localImport) {
+            if (privatePdf) {
+                newCategoryText = mScene.getString(R.string.private_pdf_category)
+                categoryColor = -0x6d5676 // Purple for private PDFs
+            } else if (localImport) {
                 newCategoryText = mScene.getString(R.string.imported_archive_category)
                 categoryColor = -0xb350b0 // Green color for imported archives
             } else {
@@ -311,14 +367,18 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
     }
 
     private fun bindState(holder: DownloadHolder, info: DownloadInfo, state: String?) {
-        holder.uploader.setVisibility(View.VISIBLE)
-        holder.rating.setVisibility(View.VISIBLE)
+        val compact = holder.thumb.visibility == View.GONE
+        val small = Settings.getDownloadListThumbSize() == 1
+        val privatePdf = PrivatePdfController.isPrivatePdf(info)
+        holder.uploader.setVisibility(if (small) View.GONE else View.VISIBLE)
+        holder.rating.setVisibility(if (compact || small || privatePdf) View.GONE else View.VISIBLE)
         holder.category.setVisibility(View.VISIBLE)
         holder.readProgress.setVisibility(View.VISIBLE)
         holder.state.setVisibility(View.VISIBLE)
         holder.progressBar.setVisibility(View.GONE)
         holder.percent.setVisibility(View.GONE)
         holder.speed.setVisibility(View.GONE)
+        holder.actions.setVisibility(if (compact || privatePdf) View.GONE else View.VISIBLE)
         if (info.state == DownloadInfo.STATE_WAIT || info.state == DownloadInfo.STATE_DOWNLOAD) {
             holder.start.setVisibility(View.GONE)
             holder.stop.setVisibility(View.VISIBLE)
@@ -340,6 +400,7 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
         holder.progressBar.setVisibility(View.VISIBLE)
         holder.percent.setVisibility(View.VISIBLE)
         holder.speed.setVisibility(View.VISIBLE)
+        holder.actions.setVisibility(View.VISIBLE)
         if (info.state == DownloadInfo.STATE_WAIT || info.state == DownloadInfo.STATE_DOWNLOAD) {
             holder.start.setVisibility(View.GONE)
             holder.stop.setVisibility(View.VISIBLE)
@@ -372,11 +433,18 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
         x: Int,
         y: Int
     ): Boolean {
+        val recyclerView = mCallback.recyclerView ?: return false
+        // 多选模式下长按用于勾选，不启动拖动
+        if (recyclerView.isInCustomChoice) {
+            return false
+        }
+        // 设置页或 FAB 都可能改这个值，这里实时读，保证开关立即生效
+        DRAG_ENABLE = Settings.getDragDownloadGallery()
         if (!DRAG_ENABLE) {
             return false
         }
-        // 检查是否点击在thumb上
-        return ViewUtils.isViewUnder(holder.thumb, x, y, 0)
+        // 允许长按条目的任意位置开始拖动；点击和滑动不受影响。
+        return true
     }
 
     override fun onGetItemDraggableRange(
@@ -416,7 +484,7 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
     }
 
     override fun onCheckCanDrop(draggingPosition: Int, dropPosition: Int): Boolean {
-        return DRAG_ENABLE
+        return Settings.getDragDownloadGallery()
     }
 
     override fun onItemDragStarted(position: Int) {
@@ -500,19 +568,35 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
     }
 
     private fun decodeLocalAlbumThumb(info: DownloadInfo): Bitmap? {
-        val dir = SpiderDen.getGalleryDownloadDir(info)
-        if (dir == null || !dir.isDirectory()) {
-            return null
+        // 旧版本导入的条目有复制出来的副本，优先用副本，行为与升级前一致
+        val legacyDir = SpiderDen.getGalleryDownloadDir(info)
+        if (legacyDir != null && legacyDir.isDirectory) {
+            val legacyFile = legacyDir.findFile(".thumb") ?: SpiderDen.findImageFile(legacyDir, 0)
+            if (legacyFile != null) {
+                val legacyThumb = decodeThumbFrom(legacyFile)
+                if (legacyThumb != null) {
+                    return legacyThumb
+                }
+            }
         }
-        var thumbFile = dir.findFile(".thumb")
-        if (thumbFile == null) {
-            thumbFile = SpiderDen.findImageFile(dir, 0)
-        }
-        if (thumbFile == null) {
-            return null
-        }
-        try {
-            thumbFile.openInputStream().use { boundsStream ->
+
+        // 新逻辑：不复制，直接从原目录读第一张图
+        val context = mScene.ehContext ?: return null
+        val treeUri = DownloadAlbumImporter.getTreeUri(info) ?: return null
+        val root = try {
+            UniFile.fromTreeUri(context, treeUri)
+        } catch (e: Exception) {
+            Log.w(TAG, "Cannot open local album tree for gid=" + info.gid, e)
+            null
+        } ?: return null
+
+        val firstImage = findFirstImage(root, 0) ?: return null
+        return decodeThumbFrom(firstImage)
+    }
+
+    private fun decodeThumbFrom(file: UniFile): Bitmap? {
+        return try {
+            file.openInputStream().use { boundsStream ->
                 val options = BitmapFactory.Options()
                 options.inJustDecodeBounds = true
                 BitmapFactory.decodeStream(boundsStream, null, options)
@@ -528,13 +612,124 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
                 options.inJustDecodeBounds = false
                 options.inSampleSize = sampleSize
                 options.inPreferredConfig = Bitmap.Config.RGB_565
-                thumbFile.openInputStream().use { decodeStream ->
-                    return BitmapFactory.decodeStream(decodeStream, null, options)
+                file.openInputStream().use { decodeStream ->
+                    BitmapFactory.decodeStream(decodeStream, null, options)
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to decode local album thumbnail for gid=" + info.gid, e)
+            Log.w(TAG, "Failed to decode thumbnail: " + file.name, e)
+            null
+        }
+    }
+
+    /**
+     * 在目录树里按自然序找第一张图片。封面用，结果会进 thumbnailCache，所以每个画廊只扫一次。
+     */
+    private fun findFirstImage(dir: UniFile, depth: Int): UniFile? {
+        if (depth > 20) {
             return null
+        }
+        val children = try {
+            dir.listFiles()
+        } catch (e: Exception) {
+            null
+        } ?: return null
+
+        var best: UniFile? = null
+        for (child in children) {
+            val name = child.name ?: continue
+            if (name.startsWith(".")) {
+                continue
+            }
+            if (child.isDirectory) {
+                val sub = findFirstImage(child, depth + 1)
+                if (sub != null) {
+                    val subName = sub.name
+                    if (best == null || (subName != null && NaturalComparator().compare(subName, best.name) < 0)) {
+                        best = sub
+                    }
+                }
+            } else if (isImageName(name)) {
+                if (best == null || NaturalComparator().compare(name, best.name) < 0) {
+                    best = child
+                }
+            }
+        }
+        return best
+    }
+
+    private fun isImageName(name: String): Boolean {
+        val lower = name.lowercase(Locale.getDefault())
+        return GalleryProvider2.SUPPORT_IMAGE_EXTENSIONS.any { lower.endsWith(it) }
+    }
+
+    private fun loadPdfThumbnail(thumb: LoadImageView, file: File) {
+        val cacheKey = "pdf:" + file.absolutePath + ":" + file.lastModified()
+        val cached = pdfThumbnailCache.get(cacheKey)
+        if (cached != null && !cached.isRecycled) {
+            thumb.setTag(R.id.thumb, cacheKey)
+            thumb.setImageBitmap(cached)
+            return
+        }
+
+        thumb.load(R.drawable.v_book_open_x24)
+        thumb.setTag(R.id.thumb, cacheKey)
+        PDF_THUMBNAIL_EXECUTOR.execute {
+            val bitmap = renderPdfThumbnail(file)
+            if (bitmap != null) {
+                pdfThumbnailCache.put(cacheKey, bitmap)
+                mScene.runOnUiThread {
+                    if (thumb.getTag(R.id.thumb) == cacheKey) {
+                        thumb.setImageBitmap(bitmap)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun renderPdfThumbnail(file: File): Bitmap? {
+        var pfd: ParcelFileDescriptor? = null
+        var renderer: PdfRenderer? = null
+        var page: PdfRenderer.Page? = null
+        try {
+            val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            pfd = descriptor
+            val pdfRenderer = PdfRenderer(descriptor)
+            renderer = pdfRenderer
+            if (pdfRenderer.pageCount <= 0) {
+                return null
+            }
+            val pdfPage = pdfRenderer.openPage(0)
+            page = pdfPage
+            val pageWidth = pdfPage.width
+            val pageHeight = pdfPage.height
+            if (pageWidth <= 0 || pageHeight <= 0) {
+                return null
+            }
+            val width = 240
+            val height = (pageHeight.toFloat() * width / pageWidth).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(Color.WHITE)
+            val matrix = Matrix()
+            matrix.setScale(width.toFloat() / pageWidth, height.toFloat() / pageHeight)
+            pdfPage.render(bitmap, null, matrix, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            return bitmap
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed to render PDF thumbnail: $file", e)
+            return null
+        } finally {
+            try {
+                page?.close()
+            } catch (ignored: Throwable) {
+            }
+            try {
+                renderer?.close()
+            } catch (ignored: Throwable) {
+            }
+            try {
+                pfd?.close()
+            } catch (ignored: Throwable) {
+            }
         }
     }
 
@@ -764,6 +959,7 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
         val readProgress: TextView
         val start: View
         val stop: View
+        val actions: View
         val state: TextView
         val progressBar: ProgressBar
         val percent: TextView
@@ -778,6 +974,7 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
             readProgress = itemView.findViewById<TextView>(R.id.read_progress)
             start = itemView.findViewById<View>(R.id.start)
             stop = itemView.findViewById<View>(R.id.stop)
+            actions = itemView.findViewById<View>(R.id.actions)
             state = itemView.findViewById<TextView>(R.id.state)
             progressBar = itemView.findViewById<ProgressBar>(R.id.progress_bar)
             percent = itemView.findViewById<TextView>(R.id.percent)
@@ -814,6 +1011,17 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
 
             if (thumb === v) {
                 val currentInfo: DownloadInfo = list[mScene.positionInList(index)]
+                if (PrivatePdfController.isPrivatePdf(currentInfo)) {
+                    val pdfFile = PrivatePdfController.getPrivatePdfFile(context, currentInfo)
+                    val activity = mScene.activity2
+                    if (pdfFile != null && activity != null) {
+                        val intent = Intent(activity, GalleryActivity::class.java)
+                        intent.action = GalleryActivity.ACTION_PDF
+                        intent.putExtra(GalleryActivity.KEY_PDF_PATH, pdfFile.absolutePath)
+                        activity.startActivity(intent)
+                    }
+                    return
+                }
                 if (isImportedArchive(currentInfo) || DownloadAlbumImporter.isLocalAlbum(currentInfo)) {
                     // Show info dialog for imported archive
                     val message =
@@ -856,5 +1064,8 @@ class DownloadAdapter(scene: DownloadsScene, callback: DownloadAdapterCallback) 
         private val TAG: String = DownloadAdapter::class.java.getSimpleName()
         @JvmField
         var DRAG_ENABLE: Boolean = false
+
+        private val pdfThumbnailCache = object : LruCache<String, Bitmap>(24) {}
+        private val PDF_THUMBNAIL_EXECUTOR = Executors.newSingleThreadExecutor()
     }
 }

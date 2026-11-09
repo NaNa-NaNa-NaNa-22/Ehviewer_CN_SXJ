@@ -518,6 +518,25 @@ public final class MainActivity extends StageActivity
         if (null == uniFile || uniFile.ensureDir()) {
             return;
         }
+        // 目录写不进去。Android 11+ 上最常见的原因是缺「所有文件访问权限」，
+        // 此时应该引导授权而不是报「下载目录无效」。
+        // 注意：只在真的写失败时才申请，不再每次冷启动无条件弹权限页。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            if (Settings.getAskedAllFilesAccess()) {
+                // 已经引导过一次，用户可能是拒绝了，给一个可再次进入设置的入口
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.waring)
+                        .setMessage(R.string.invalid_download_location)
+                        .setPositiveButton(R.string.get_it,
+                                (d, w) -> requestAllFilesAccessPermissionSafely())
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+            } else {
+                Settings.putAskedAllFilesAccess(true);
+                requestAllFilesAccessPermissionSafely();
+            }
+            return;
+        }
         new AlertDialog.Builder(this)
                 .setTitle(R.string.waring)
                 .setMessage(R.string.invalid_download_location)
@@ -533,11 +552,12 @@ public final class MainActivity extends StageActivity
 
     private void onInit() {
         // Check permission
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                requestAllFilesAccessPermissionSafely();
-            }
-        } else {
+        // 注意：Android 11+ 的「所有文件访问权限」不在这里申请。
+        // 默认下载目录（/sdcard/EhViewer）确实需要它，但并不是启动就必须，
+        // 因此改到 checkDownloadLocation() 真正写失败时再申请，避免每次冷启动
+        // 都弹高风险权限页——这既是体验问题，也是国产 ROM / 安全软件判定
+        // 「索权异常」的主要来源之一。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             PermissionRequester.request(this, Manifest.permission.WRITE_EXTERNAL_STORAGE,
                     getString(R.string.write_rationale), PERMISSION_REQUEST_WRITE_EXTERNAL_STORAGE);
         }

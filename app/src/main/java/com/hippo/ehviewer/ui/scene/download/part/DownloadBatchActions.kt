@@ -291,6 +291,13 @@ class DownloadBatchActions(private val mHost: Host) {
             // Cancel check mode
             mRecyclerView?.outOfCustomChoiceMode()
 
+            // Private PDFs have no gallery directory; delete their backing file too.
+            mDownloadInfoList?.forEach { info ->
+                if (PrivatePdfController.isPrivatePdf(info)) {
+                    PrivatePdfController.getPrivatePdfFile(mRecyclerView?.context, info)?.delete()
+                }
+            }
+
             // Delete
             mDownloadManager?.deleteRangeDownload(mGidList)
 

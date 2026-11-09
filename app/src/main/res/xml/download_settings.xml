@@ -51,11 +51,27 @@
         app:entryValues="@array/preload_image_entry_values"
         app:iconSpaceReserved="false" />
 
+    <com.hippo.preference.ListPreference
+        android:defaultValue="2"
+        android:key="download_list_thumb_size"
+        android:summary="@string/settings_download_list_thumb_size_summary"
+        android:title="@string/settings_download_list_thumb_size"
+        app:allowDividerAbove="true"
+        app:entries="@array/download_list_thumb_size_entries"
+        app:entryValues="@array/download_list_thumb_size_entry_values"
+        app:iconSpaceReserved="false" />
+
     <com.hippo.preference.SwitchPreference
         android:defaultValue="true"
         android:key="download_list_pagination"
         android:summary="@string/settings_download_download_list_pagination_summary"
         android:title="@string/settings_download_download_list_pagination" />
+
+    <com.hippo.preference.SwitchPreference
+        android:defaultValue="true"
+        android:key="drag_download_gallery"
+        android:summary="@string/settings_download_drag_to_reorder_summary"
+        android:title="@string/settings_download_drag_to_reorder" />
 
     <!-- Default value for debugging: a -->
     <com.hippo.preference.ListPreference

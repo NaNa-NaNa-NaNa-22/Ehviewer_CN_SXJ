@@ -3,17 +3,57 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "org.jetbrains.kotlin.plugin.parcelize"
 apply plugin: "org.jetbrains.kotlin.kapt"
 apply plugin: "com.jaredsburrows.license"
-if (file('google-services.json').exists()) {
-    apply plugin: 'com.google.gms.google-services'
-    apply plugin: 'com.google.firebase.crashlytics'
+
+// ---------------------------------------------------------------------------
+// 签名配置
+//
+// 背景：这个工程原本 <b>完全没有</b> signingConfigs，`assembleRelease` 产出的是
+// app-release-unsigned.apk，装上必然「解析包错误」；而 CI 里用的 jarsigner 只产生
+// v1(JAR) 签名，Android 11+ 对 targetSdk >= 30 的应用强制要求 v2 及以上，会被判定成
+// 「安装包没有签名 / packageInfo is none」。
+//
+// 现在统一交给 AGP 的 signingConfig（底层就是 apksigner），显式开 v1+v2+v3：
+//   v1  -> Android 6.0 (API 23) 需要，因为 v2 是 API 24 才引入
+//   v2+ -> Android 11+ 强制要求
+//
+// 密钥来源优先级：环境变量 > keystore.properties > 无（退化为未签名构建，仅用于本地调试）
+// ---------------------------------------------------------------------------
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
 }
+
+def signingStoreFile = System.getenv("EHVIEWER_KEYSTORE_FILE") ?: keystoreProps.getProperty("storeFile")
+def signingStorePassword = System.getenv("EHVIEWER_KEYSTORE_PASSWORD") ?: keystoreProps.getProperty("storePassword")
+def signingKeyAlias = System.getenv("EHVIEWER_KEY_ALIAS") ?: keystoreProps.getProperty("keyAlias")
+def signingKeyPassword = System.getenv("EHVIEWER_KEY_PASSWORD") ?: keystoreProps.getProperty("keyPassword")
+def hasSigningConfig = signingStoreFile && signingStorePassword && signingKeyAlias
 
 android {
     namespace 'com.hippo.ehviewer'
     testNamespace 'com.hippo.ehviewer.debug'
     compileSdk 35
 //    buildToolsVersion "30.0.3"
-//    ndkVersion '26.1.10909125'
+    // 钉死 NDK 版本：不写这行时 AGP 会用它自己的默认版本
+    // （AGP 9.3.1 默认要 28.2.13676358），换台机器就报 "NDK not configured"。
+    // 用 r27 是因为本机已安装且 CMake 侧无版本相关 API。
+    ndkVersion "27.0.12077973"
+
+    // 只有真的拿到密钥才声明 signingConfig，避免留下一个空配置让 AGP 校验失败
+    if (hasSigningConfig) {
+        signingConfigs {
+            release {
+                storeFile rootProject.file(signingStoreFile)
+                storePassword signingStorePassword
+                keyAlias signingKeyAlias
+                keyPassword signingKeyPassword ?: signingStorePassword
+                enableV1Signing true
+                enableV2Signing true
+                enableV3Signing true
+            }
+        }
+    }
 
     flavorDimensions "distribute"
     productFlavors {
@@ -26,7 +66,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.xjs.ehviewer"
+        applicationId "com.ecv.customview"
         minSdkVersion 23
         //noinspection ExpiredTargetSdkVersion
         targetSdkVersion 30
@@ -58,11 +98,16 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            buildConfigField 'String', 'FILE_PROVIDER_AUTHORITY', '"com.hippo.ehviewer.fileprovider"'
+            buildConfigField 'String', 'FILE_PROVIDER_AUTHORITY', '"com.ecv.customview.fileprovider"'
+            // 没配密钥时保持未签名（仅供本地调试）；正式出包必须配 keystore.properties，
+            // 否则产物是 app-release-unsigned.apk，装了会报「解析包错误」。
+            if (hasSigningConfig) {
+                signingConfig signingConfigs.release
+            }
         }
         debug {
             applicationIdSuffix ".debug1"
-            buildConfigField 'String', 'FILE_PROVIDER_AUTHORITY', '"com.hippo.ehviewer.debug.fileprovider"'
+            buildConfigField 'String', 'FILE_PROVIDER_AUTHORITY', '"com.ecv.customview.debug1.fileprovider"'
         }
     }
 
@@ -103,15 +148,11 @@ dependencies {
 
     implementation 'com.google.android.material:material:1.14.0'
 
-    // app使用情况数据收集
-    // Import the BoM for the Firebase platform
-//    implementation platform('com.google.firebase:firebase-bom:32.1.0')
-
-    // Add the dependencies for the Crashlytics and Analytics libraries
-    // When using the BoM, you don't specify versions in Firebase library dependencies
-    implementation 'com.google.firebase:firebase-crashlytics:20.1.0'
-    implementation 'com.google.firebase:firebase-analytics:23.2.0'
-//    implementation 'com.google.firebase:firebase-analytics:21.5.1'
+    // 已移除 Firebase Analytics / Crashlytics：
+    //   1. 本工程没有 google-services.json，Analytics 实际上从未正确初始化
+    //   2. 依赖会带进 AD_ID / ACCESS_ADSERVICES_* / BIND_GET_INSTALL_REFERRER_SERVICE
+    //      这几个权限，是安全软件误报的主要来源
+    //   3. 崩溃改为写本地日志，见 com.hippo.ehviewer.Analytics
 
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.activity:activity:1.2.4"

@@ -18,6 +18,7 @@ package com.hippo.unifile;
 
 import android.content.Context;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 import android.text.TextUtils;
 import android.util.Log;
 import android.webkit.MimeTypeMap;
@@ -36,6 +37,12 @@ class TreeDocumentFile extends UniFile {
     private final Context mContext;
     private Uri mUri;
     private String mFilename;
+    /**
+     * 由 listFilesWithInfo() 一次性带回来的元数据。非 null 时不要再发 ContentResolver
+     * 查询；通过 subFile()/findFile() 等单个构造出来的对象为 null，仍然按需查询。
+     */
+    private String mDisplayName;
+    private String mMimeType;
 
     TreeDocumentFile(UniFile parent, Context context, Uri uri) {
         super(parent);
@@ -44,10 +51,17 @@ class TreeDocumentFile extends UniFile {
     }
 
     private TreeDocumentFile(UniFile parent, Context context, Uri uri, String filename) {
+        this(parent, context, uri, filename, null, null);
+    }
+
+    private TreeDocumentFile(UniFile parent, Context context, Uri uri, String filename,
+                             String displayName, String mimeType) {
         super(parent);
         mContext = context.getApplicationContext();
         mUri = uri;
         mFilename = filename;
+        mDisplayName = displayName;
+        mMimeType = mimeType;
     }
 
     @Override
@@ -103,21 +117,34 @@ class TreeDocumentFile extends UniFile {
 
     @Override
     public String getName() {
+        if (mDisplayName != null) {
+            return mDisplayName;
+        }
         return com.hippo.unifile.DocumentsContractApi19.getName(mContext, mUri);
     }
 
     @Override
     public String getType() {
+        if (mMimeType != null) {
+            return DocumentsContract.Document.MIME_TYPE_DIR.equals(mMimeType) ? null : mMimeType;
+        }
         return com.hippo.unifile.DocumentsContractApi19.getType(mContext, mUri);
     }
 
     @Override
     public boolean isDirectory() {
+        if (mMimeType != null) {
+            return DocumentsContract.Document.MIME_TYPE_DIR.equals(mMimeType);
+        }
         return com.hippo.unifile.DocumentsContractApi19.isDirectory(mContext, mUri);
     }
 
     @Override
     public boolean isFile() {
+        if (mMimeType != null) {
+            return !DocumentsContract.Document.MIME_TYPE_DIR.equals(mMimeType)
+                    && !TextUtils.isEmpty(mMimeType);
+        }
         return com.hippo.unifile.DocumentsContractApi19.isFile(mContext, mUri);
     }
 
@@ -202,6 +229,21 @@ class TreeDocumentFile extends UniFile {
 
     @Override
     public UniFile[] listFiles() {
+        final DocumentsContractApi21.DocumentInfo[] infos =
+                DocumentsContractApi21.listFilesWithInfo(mContext, mUri);
+        if (infos != null) {
+            final UniFile[] resultFiles = new UniFile[infos.length];
+            for (int i = 0, n = infos.length; i < n; i++) {
+                final DocumentsContractApi21.DocumentInfo info = infos[i];
+                final String filename = info.displayName != null
+                        ? info.displayName : getFilenameForUri(info.uri);
+                resultFiles[i] = new TreeDocumentFile(this, mContext, info.uri, filename,
+                        info.displayName, info.mimeType);
+            }
+            return resultFiles;
+        }
+
+        // Some providers don't support the projection above; fall back to the old path.
         try {
             final Uri[] result = DocumentsContractApi21.listFiles(mContext, mUri);
             if (result == null) {
@@ -223,6 +265,21 @@ class TreeDocumentFile extends UniFile {
     public UniFile[] listFiles(FilenameFilter filter) {
         if (filter == null) {
             return listFiles();
+        }
+
+        final DocumentsContractApi21.DocumentInfo[] infos =
+                DocumentsContractApi21.listFilesWithInfo(mContext, mUri);
+        if (infos != null) {
+            final ArrayList<UniFile> results = new ArrayList<>();
+            for (DocumentsContractApi21.DocumentInfo info : infos) {
+                final String filename = info.displayName != null
+                        ? info.displayName : getFilenameForUri(info.uri);
+                if (filter.accept(this, filename)) {
+                    results.add(new TreeDocumentFile(this, mContext, info.uri, filename,
+                            info.displayName, info.mimeType));
+                }
+            }
+            return results.toArray(new UniFile[results.size()]);
         }
 
         try {
@@ -257,6 +314,8 @@ class TreeDocumentFile extends UniFile {
         final Uri result = DocumentsContractApi21.renameTo(mContext, mUri, displayName);
         if (result != null) {
             mUri = result;
+            mFilename = displayName;
+            mDisplayName = displayName;
             return true;
         } else {
             return false;

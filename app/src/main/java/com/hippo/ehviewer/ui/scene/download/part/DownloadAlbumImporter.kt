@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,29 +20,28 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import android.util.SparseArray
 import android.widget.Toast
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
-import com.hippo.ehviewer.EhDB
 import com.hippo.ehviewer.R
-import com.hippo.ehviewer.Settings
 import com.hippo.ehviewer.client.EhUtils
 import com.hippo.ehviewer.dao.DownloadInfo
 import com.hippo.ehviewer.download.DownloadManager
 import com.hippo.ehviewer.gallery.GalleryProvider2
 import com.hippo.ehviewer.spider.SpiderDen
-import com.hippo.ehviewer.spider.SpiderInfo
-import com.hippo.ehviewer.spider.SpiderQueen
 import com.hippo.lib.yorozuya.StringUtils
-import com.hippo.lib.yorozuya.Utilities
 import com.hippo.unifile.UniFile
-import com.hippo.util.FileUtils.Companion.copyFile
 import com.hippo.util.NaturalComparator
 import java.util.Collections
 
 /**
- * 将本地图片文件夹复制为已完成画廊。
+ * 将本地图片文件夹登记为已完成画廊。
+ *
+ * <p>注意：这里<b>不复制任何文件</b>。只在数据库里写入一条 DownloadInfo，把 SAF 目录树的
+ * URI 存进 archiveUri；阅读时由 [com.hippo.ehviewer.gallery.LocalAlbumGalleryProvider]
+ * 直接从原目录按需读取。所以导入后不会产生第二份图片，删除原目录后画廊才会失效。
+ *
+ * <p>旧实现是复制到下载目录并重命名为 00000001.jpg，磁盘占用翻倍，已废弃。
  */
 class DownloadAlbumImporter(private val mHost: Host) {
     interface Host {
@@ -109,8 +108,6 @@ class DownloadAlbumImporter(private val mHost: Host) {
     private fun processAlbumFolder(uri: Uri) {
         val context: Context = mHost.eHContext ?: return
 
-        var downloadDir: UniFile? = null
-        var gid = -1L
         try {
             val sourceDir = UniFile.fromTreeUri(context, uri)
             if (sourceDir == null || !sourceDir.isDirectory()) {
@@ -119,8 +116,7 @@ class DownloadAlbumImporter(private val mHost: Host) {
             }
 
             val archiveUri: String = URI_PREFIX + uri.toString()
-            val downloadManager =
-                mHost.downloadManager
+            val downloadManager = mHost.downloadManager
             if (downloadManager != null && isAlreadyImported(downloadManager, archiveUri)) {
                 showToast(R.string.import_album_already_imported)
                 return
@@ -147,42 +143,11 @@ class DownloadAlbumImporter(private val mHost: Host) {
                     )
                 })
 
-            if (Settings.getDownloadLocation() == null) {
-                showToast(R.string.settings_download_invalid_download_location)
-                return
-            }
-
-            gid = System.currentTimeMillis()
+            // 到这里为止只是枚举，没有任何写盘操作。
+            val gid = System.currentTimeMillis()
             val downloadInfo = createAlbumDownloadInfo(gid, sourceDir, archiveUri, images.size)
-            val spiderDen = SpiderDen(downloadInfo)
-            spiderDen.setMode(SpiderQueen.MODE_DOWNLOAD)
-            if (!spiderDen.prepareDownloadStorage()) {
-                cleanupFailedImport(gid, null)
-                showFailed()
-                return
-            }
-
-            downloadDir = spiderDen.getDownloadDir()
-            if (downloadDir == null) {
-                cleanupFailedImport(gid, null)
-                showFailed()
-                return
-            }
-
-            val copiedCount = copyImages(images, downloadDir)
-            if (copiedCount == 0) {
-                cleanupFailedImport(gid, downloadDir)
-                showFailed()
-                return
-            }
-
-            downloadInfo.total = copiedCount
-            downloadInfo.finished = copiedCount
-            writeSpiderInfo(context, spiderDen, gid, copiedCount)
-            copyThumb(images.get(0)!!, downloadDir)
 
             if (downloadManager == null) {
-                cleanupFailedImport(gid, downloadDir)
                 showFailed()
                 return
             }
@@ -193,7 +158,7 @@ class DownloadAlbumImporter(private val mHost: Host) {
             mHost.runOnUiThread {
                 Toast.makeText(
                     context,
-                    context.getString(R.string.import_album_success, copiedCount),
+                    context.getString(R.string.import_album_success, images.size),
                     Toast.LENGTH_SHORT
                 ).show()
                 mHost.updateForLabel()
@@ -201,7 +166,6 @@ class DownloadAlbumImporter(private val mHost: Host) {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to process album folder", e)
-            cleanupFailedImport(gid, downloadDir)
             showFailed()
         }
     }
@@ -221,7 +185,8 @@ class DownloadAlbumImporter(private val mHost: Host) {
         }
         downloadInfo.title = folderName
         downloadInfo.titleJpn = null
-        downloadInfo.thumb = LOCAL_THUMB
+        // 没有缩略图文件，列表页会从原目录解第一张图作为封面
+        downloadInfo.thumb = null
         downloadInfo.category = EhUtils.UNKNOWN
         downloadInfo.posted = null
         downloadInfo.uploader = LOCAL_UPLOADER
@@ -234,60 +199,6 @@ class DownloadAlbumImporter(private val mHost: Host) {
         downloadInfo.finished = imageCount
         downloadInfo.archiveUri = archiveUri
         return downloadInfo
-    }
-
-    private fun copyImages(images: MutableList<UniFile?>, downloadDir: UniFile): Int {
-        var copiedCount = 0
-        for (i in images.indices) {
-            val picture = images[i]
-            if (picture == null || !picture.isFile()) {
-                continue
-            }
-            val extension = getImageExtension(picture.getName())
-            val newName = SpiderDen.generateImageFilename(copiedCount, extension)
-            var destFile = downloadDir.findFile(newName)
-            if (destFile != null && destFile.exists() && !destFile.delete()) {
-                continue
-            }
-            destFile = downloadDir.createFile(newName)
-            if (destFile == null) {
-                Log.e(TAG, "Failed to create file: $newName")
-                continue
-            }
-            if (!copyFile(picture, destFile, false)) {
-                Log.e(TAG, "Failed to copy file: " + picture.getName() + " to " + newName)
-                destFile.delete()
-                continue
-            }
-            copiedCount++
-        }
-        return copiedCount
-    }
-
-    private fun writeSpiderInfo(context: Context, spiderDen: SpiderDen, gid: Long, pages: Int) {
-        val spiderInfo = SpiderInfo()
-        spiderInfo.gid = gid
-        spiderInfo.token = LOCAL_TOKEN
-        spiderInfo.pages = pages
-        spiderInfo.previewPages = 0
-        spiderInfo.previewPerPage = 0
-        spiderInfo.startPage = 0
-        spiderInfo.pTokenMap = SparseArray<String?>(pages)
-        spiderInfo.writeNewSpiderInfoToLocal(spiderDen, context.getApplicationContext())
-    }
-
-    private fun copyThumb(firstImage: UniFile, downloadDir: UniFile) {
-        var thumbFile = downloadDir.findFile(".thumb")
-        if (thumbFile != null && thumbFile.exists()) {
-            thumbFile.delete()
-        }
-        thumbFile = downloadDir.createFile(".thumb")
-        if (thumbFile == null) {
-            return
-        }
-        if (!copyFile(firstImage, thumbFile, false)) {
-            thumbFile.delete()
-        }
     }
 
     private fun resolveImportRoot(dir: UniFile?): UniFile? {
@@ -340,18 +251,6 @@ class DownloadAlbumImporter(private val mHost: Host) {
         return StringUtils.endsWith(name.lowercase(), GalleryProvider2.SUPPORT_IMAGE_EXTENSIONS)
     }
 
-    private fun getImageExtension(fileName: String?): String? {
-        if (fileName == null) {
-            return GalleryProvider2.SUPPORT_IMAGE_EXTENSIONS[0]
-        }
-        val dot = fileName.lastIndexOf('.')
-        val extension = if (dot >= 0) fileName.substring(dot).lowercase() else ""
-        if (Utilities.contain(GalleryProvider2.SUPPORT_IMAGE_EXTENSIONS, extension)) {
-            return extension
-        }
-        return GalleryProvider2.SUPPORT_IMAGE_EXTENSIONS[0]
-    }
-
     private fun isAlreadyImported(manager: DownloadManager, archiveUri: String): Boolean {
         val all = manager.allDownloadInfoList ?: return false
         for (info in all) {
@@ -360,19 +259,6 @@ class DownloadAlbumImporter(private val mHost: Host) {
             }
         }
         return false
-    }
-
-    private fun cleanupFailedImport(gid: Long, downloadDir: UniFile?) {
-        if (downloadDir != null) {
-            try {
-                downloadDir.delete()
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to delete incomplete album directory", e)
-            }
-        }
-        if (gid > 0) {
-            EhDB.removeDownloadDirname(gid)
-        }
     }
 
     private fun showFailed() {
@@ -385,15 +271,64 @@ class DownloadAlbumImporter(private val mHost: Host) {
     }
 
     companion object {
-        private val TAG: String = DownloadAlbumImporter::class.java.getSimpleName()
+        private val TAG: String = DownloadAlbumImporter::class.java.simpleName
 
         const val URI_PREFIX: String = "local-album:"
         private const val LOCAL_TOKEN = "local"
-        private const val LOCAL_THUMB = "local"
         private const val LOCAL_UPLOADER = "Local Album"
 
+        @JvmStatic
         fun isLocalAlbum(info: DownloadInfo?): Boolean {
             return info != null && info.archiveUri != null && info.archiveUri.startsWith(URI_PREFIX)
+        }
+
+        /**
+         * 从 archiveUri 里还原出 SAF 目录树的 URI。不是本地相册则返回 null。
+         */
+        @JvmStatic
+        fun getTreeUri(info: DownloadInfo?): Uri? {
+            val raw = info?.archiveUri ?: return null
+            if (!raw.startsWith(URI_PREFIX)) {
+                return null
+            }
+            return try {
+                Uri.parse(raw.substring(URI_PREFIX.length))
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /**
+         * 旧版本（2.0.2.7 及以前）导入时会把图片<b>复制</b>到下载目录，但 archiveUri 也带
+         * 同样的 `local-album:` 前缀。这类条目必须继续走原来的本地阅读路径，
+         * 否则升级后突然读不到（原目录很可能早就被删了）。
+         *
+         * @return true 表示存在旧版本复制出来的副本
+         */
+        @JvmStatic
+        fun hasLocalCopy(info: DownloadInfo?): Boolean {
+            if (info == null) {
+                return false
+            }
+            return try {
+                val dir = SpiderDen.getGalleryDownloadDir(info) ?: return false
+                dir.isDirectory && SpiderDen.findImageFile(dir, 0) != null
+            } catch (e: Exception) {
+                false
+            }
+        }
+
+        /**
+         * 目录树是否仍然可读。用于提示「原目录已删除/移动/授权失效」。
+         */
+        @JvmStatic
+        fun isTreeAccessible(context: Context, treeUri: Uri): Boolean {
+            return try {
+                val dir = UniFile.fromTreeUri(context, treeUri)
+                dir != null && dir.isDirectory && (dir.listFiles()?.isNotEmpty() == true)
+            } catch (e: Exception) {
+                false
+            }
         }
     }
 }

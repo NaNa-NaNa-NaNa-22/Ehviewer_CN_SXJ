@@ -27,7 +27,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StyleRes;
 import androidx.appcompat.app.AppCompatActivity;
-import com.google.firebase.analytics.FirebaseAnalytics;
 import com.hippo.content.ContextLocalWrapper;
 import com.hippo.ehviewer.Analytics;
 import com.hippo.ehviewer.EhApplication;
@@ -47,10 +46,6 @@ public abstract class EhActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         ((EhApplication) getApplication()).registerActivity(this);
-
-        if (Analytics.isEnabled()) {
-            FirebaseAnalytics.getInstance(this);
-        }
     }
 
     @Override

@@ -77,6 +77,7 @@ import com.hippo.ehviewer.ui.GalleryActivity;
 import com.hippo.ehviewer.ui.MainActivity;
 import com.hippo.ehviewer.ui.scene.ToolbarScene;
 import com.hippo.ehviewer.ui.scene.download.part.DownloadAdapter;
+import com.hippo.ehviewer.ui.scene.download.part.PrivatePdfController;
 import com.hippo.ehviewer.ui.scene.download.part.DownloadAlbumImporter;
 import com.hippo.ehviewer.ui.scene.download.part.DownloadArchiveImporter;
 import com.hippo.ehviewer.ui.scene.download.part.DownloadBatchActions;
@@ -103,6 +104,7 @@ import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
 import java.io.InputStream;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
@@ -119,7 +121,7 @@ public class DownloadsScene extends ToolbarScene
         DownloadAdapter.DownloadAdapterCallback,
         DownloadArchiveImporter.Host, DownloadAlbumImporter.Host, DownloadSearchController.Host,
         DownloadBatchActions.Host, DownloadPaginationController.Host,
-        DownloadGuideHelper.Host, DownloadChoiceListener.Host {
+        DownloadGuideHelper.Host, DownloadChoiceListener.Host, PrivatePdfController.Host {
 
     private static final String TAG = DownloadsScene.class.getSimpleName();
 
@@ -151,6 +153,7 @@ public class DownloadsScene extends ToolbarScene
 
     private final DownloadArchiveImporter mArchiveImporter = new DownloadArchiveImporter(this);
     private final DownloadAlbumImporter mAlbumImporter = new DownloadAlbumImporter(this);
+    private final PrivatePdfController mPrivatePdf = new PrivatePdfController(this);
     private final DownloadSearchController mSearchController = new DownloadSearchController(this);
     private final DownloadBatchActions mBatchActions = new DownloadBatchActions(this);
     private final DownloadPaginationController mPaginationController = new DownloadPaginationController(this);
@@ -167,6 +170,7 @@ public class DownloadsScene extends ToolbarScene
     private FabLayout mFabLayout;
     @Nullable
     private RecyclerView.Adapter mAdapter;
+    private int mDownloadThumbSize = -1;
     @Nullable
     private DownloadAdapter mOriginalAdapter;
     @Nullable
@@ -207,9 +211,74 @@ public class DownloadsScene extends ToolbarScene
             mAlbumImporter::handleSelectedFolder
     );
 
+    @NonNull
+    private final ActivityResultLauncher<Intent> pdfPickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
+                    return;
+                }
+                Uri uri = result.getData().getData();
+                if (uri == null) {
+                    return;
+                }
+
+                Context context = getEHContext();
+                if (context != null) {
+                    try {
+                        context.getContentResolver().takePersistableUriPermission(
+                                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (Exception e) {
+                        // 当前读取授权通常已经足够，持久化失败不阻止打开
+                        Log.w(TAG, "Failed to persist PDF URI permission", e);
+                    }
+                }
+
+                Activity activity = getActivity2();
+                if (activity != null) {
+                    Intent intent = new Intent(activity, GalleryActivity.class);
+                    intent.setAction(GalleryActivity.ACTION_PDF);
+                    intent.setData(uri);
+                    activity.startActivity(intent);
+                }
+            }
+    );
+
+    @NonNull
+    private final ActivityResultLauncher<Intent> privatePdfImportLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            mPrivatePdf::handleImportResult
+    );
+
+    @NonNull
+    private final ActivityResultLauncher<Intent> privatePdfExportLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            mPrivatePdf::handleExportResult
+    );
+
     @Override
     public int getNavCheckedItem() {
         return R.id.nav_downloads;
+    }
+
+    private void openPdf() {
+        Context context = getEHContext();
+        if (context == null) {
+            return;
+        }
+
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/pdf");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+        try {
+            pdfPickerLauncher.launch(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to launch PDF picker", e);
+            Toast.makeText(context, R.string.pdf_open_failed, Toast.LENGTH_SHORT).show();
+        }
     }
 
     private boolean handleArguments(Bundle args) {
@@ -257,6 +326,7 @@ public class DownloadsScene extends ToolbarScene
         AssertUtils.assertNotNull(context);
         mDownloadManager = EhApplication.getDownloadManager(context);
         mDownloadManager.addDownloadInfoListener(this);
+        mPrivatePdf.sync(null);
         mPaginationController.setCanPagination(Settings.getDownloadPagination());
         if (savedInstanceState == null) {
             onInit();
@@ -265,6 +335,22 @@ public class DownloadsScene extends ToolbarScene
         }
     }
 
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (mAdapter != null) {
+            int thumbSize = Settings.getDownloadListThumbSize();
+            if (mRecyclerView != null && thumbSize != mDownloadThumbSize) {
+                // View type changes when switching between compact and thumbnail layouts.
+                // Re-attach the adapter so existing holders are recreated with the new layout.
+                mDownloadThumbSize = thumbSize;
+                mRecyclerView.setAdapter(mAdapter);
+            } else {
+                mAdapter.notifyDataSetChanged();
+            }
+        }
+    }
 
     @Override
     public void onDestroy() {
@@ -470,6 +556,11 @@ public class DownloadsScene extends ToolbarScene
     private void setupRecyclerView(@NonNull Context context, @NonNull Resources resources) {
         // 初始化拖拽管理器
         mDragDropManager = new RecyclerViewDragDropManager();
+        // 这个库默认会在手指移动时也启动拖动（mInitiateOnMove=true），
+        // 会导致正常上下滑动列表时误触发拖拽。这里改成只有长按才启动拖动。
+        mDragDropManager.setInitiateOnLongPress(true);
+        mDragDropManager.setInitiateOnMove(false);
+        mDragDropManager.setInitiateOnTouch(false);
         try {
             mDragDropManager.setDraggingItemShadowDrawable(
                     (NinePatchDrawable) context.getResources().getDrawable(R.drawable.shadow_8dp));
@@ -484,6 +575,7 @@ public class DownloadsScene extends ToolbarScene
         mAdapter = mDragDropManager.createWrappedAdapter(mOriginalAdapter); // 包装适配器以支持拖拽
         mDragDropManager.setCheckCanDropEnabled(false);
         mRecyclerView.setAdapter(mAdapter);
+        mDownloadThumbSize = Settings.getDownloadListThumbSize();
 
         // 初始化分页监听器
         mPaginationController.bindPageChangeListener(mOriginalAdapter, mRecyclerView);
@@ -699,6 +791,12 @@ public class DownloadsScene extends ToolbarScene
             case R.id.import_local_album:
                 mAlbumImporter.importLocalAlbum(folderPickerLauncher);
                 return true;
+            case R.id.open_pdf:
+                openPdf();
+                return true;
+            case R.id.private_pdf:
+                mPrivatePdf.show(privatePdfImportLauncher, privatePdfExportLauncher);
+                return true;
 //            case R.id.misc:
 //            case R.id.doujinshi:
 //            case R.id.manga:
@@ -785,8 +883,35 @@ public class DownloadsScene extends ToolbarScene
 
             DownloadInfo downloadInfo = list.get(positionInList(position));
             Intent intent = new Intent(activity, GalleryActivity.class);
-            // Check if this is an imported archive
-            if (downloadInfo.archiveUri != null && downloadInfo.archiveUri.startsWith("content://")) {
+
+            if (PrivatePdfController.isPrivatePdf(downloadInfo)) {
+                File pdfFile = PrivatePdfController.getPrivatePdfFile(getEHContext(), downloadInfo);
+                if (pdfFile == null || !pdfFile.isFile()) {
+                    Toast.makeText(getEHContext(), R.string.archive_not_accessible, Toast.LENGTH_SHORT).show();
+                    mPrivatePdf.sync(null);
+                    updateForLabel();
+                    updateView();
+                    return true;
+                }
+                intent.setAction(GalleryActivity.ACTION_PDF);
+                intent.putExtra(GalleryActivity.KEY_PDF_PATH, pdfFile.getAbsolutePath());
+                activity.startActivity(intent);
+                return true;
+            }
+            // 本地相册：只引用了原目录，打开时把目录树 URI 交给 GalleryActivity。
+            // 注意排除旧版本导入的条目——它们当时已经把图复制到下载目录了，
+            // 继续走下面的 ACTION_EH 老路径，否则升级后会读不到。
+            if (DownloadAlbumImporter.isLocalAlbum(downloadInfo)
+                    && !DownloadAlbumImporter.hasLocalCopy(downloadInfo)) {
+                Uri treeUri = DownloadAlbumImporter.getTreeUri(downloadInfo);
+                if (treeUri == null || !DownloadAlbumImporter.isTreeAccessible(getEHContext(), treeUri)) {
+                    // 原目录被删除/移动，或 SAF 授权已失效
+                    Toast.makeText(getEHContext(), R.string.archive_not_accessible, Toast.LENGTH_SHORT).show();
+                    return true;
+                }
+                intent.setAction(GalleryActivity.ACTION_LOCAL_ALBUM);
+                intent.setData(treeUri);
+            } else if (downloadInfo.archiveUri != null && downloadInfo.archiveUri.startsWith("content://")) {
                 // This is an imported archive, ensure URI permission is available
                 Uri archiveUri = Uri.parse(downloadInfo.archiveUri);
                 try {
@@ -829,6 +954,11 @@ public class DownloadsScene extends ToolbarScene
         MyEasyRecyclerView recyclerView = mRecyclerView;
         if (recyclerView == null) {
             return false;
+        }
+
+        // 拖动模式下长按用于拖动排序，不要再进入多选
+        if (!recyclerView.isInCustomChoice() && Settings.getDragDownloadGallery()) {
+            return true;
         }
 
         if (!recyclerView.isInCustomChoice()) {
@@ -957,6 +1087,12 @@ public class DownloadsScene extends ToolbarScene
     public void onRemove(@NonNull DownloadInfo info, @NonNull List<DownloadInfo> list, int position) {
         if (mList != list) {
             return;
+        }
+        if (PrivatePdfController.isPrivatePdf(info)) {
+            File pdfFile = PrivatePdfController.getPrivatePdfFile(getEHContext(), info);
+            if (pdfFile != null) {
+                pdfFile.delete();
+            }
         }
         if (mAdapter != null) {
             mAdapter.notifyItemRemoved(listIndexInPage(position));

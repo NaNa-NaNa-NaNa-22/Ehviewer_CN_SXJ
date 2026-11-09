@@ -1,30 +1,68 @@
-# Android
-# Build your Android project with Gradle.
-# Add steps that test, sign, and distribute the APK, save build artifacts, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/android
+# Azure Pipelines
+#
+# 旧版本的问题（已修正）：
+#   1. 只跑 assembleDebug，产物是 debug 包
+#   2. apkFiles 写成 'build/Ehviewer.apk'，路径根本不存在
+#   3. jarsignerKeystoreFile 写成 'text.key'，仓库里实际叫 test.key
+#   4. 用 jarsigner 签 -> 只有 v1 签名 -> Android 11+ 直接判「没有签名」
+#   5. 签完再 zipalign -> 会破坏 v2 签名块
+#
+# 现在改为：Gradle 用 signingConfig 出正式包（底层 apksigner，v1+v2+v3），
+# 再用 apksigner verify 卡一道，签不过就让流水线失败。
+#
+# 需要的变量组：ehviewer-signing
+#   ANDROID_KEYSTORE_BASE64      密钥库文件的 base64
+#   ANDROID_KEYSTORE_PASSWORD    库口令
+#   ANDROID_KEY_ALIAS            别名
+#   ANDROID_KEY_PASSWORD         密钥口令
 
 trigger:
 - BiLi_PC_Gamer
 
+pr:
+- BiLi_PC_Gamer
+
 pool:
-  vmImage: 'macos-latest'
+  vmImage: 'ubuntu-latest'
+
+variables:
+- group: ehviewer-signing
 
 steps:
-- task: Gradle@2
+- bash: |
+    set -euo pipefail
+    echo "$(ANDROID_KEYSTORE_BASE64)" | base64 --decode > release.jks
+    chmod 600 release.jks
+  displayName: 'Decode keystore'
+
+- task: Gradle@3
+  displayName: 'Build'
   inputs:
     workingDirectory: ''
     gradleWrapperFile: 'gradlew'
     gradleOptions: '-Xmx3072m'
-    publishJUnitResults: true
-    testResultsFiles: '**/TEST-*.xml'
-    tasks: 'assembleDebug'
+    publishJUnitResults: false
+    tasks: 'app:assembleRelease'
+  env:
+    EHVIEWER_KEYSTORE_FILE: '$(Build.SourcesDirectory)/release.jks'
+    EHVIEWER_KEYSTORE_PASSWORD: '$(ANDROID_KEYSTORE_PASSWORD)'
+    EHVIEWER_KEY_ALIAS: '$(ANDROID_KEY_ALIAS)'
+    EHVIEWER_KEY_PASSWORD: '$(ANDROID_KEY_PASSWORD)'
 
-- task: AndroidSigning@2
+- bash: |
+    set -euo pipefail
+    APK=$(find app/build/outputs/apk -name '*.apk' | head -n 1)
+    test -n "$APK"
+    BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
+    "$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+  displayName: 'Verify APK signature'
+
+- task: CopyFiles@2
   inputs:
-    apkFiles: 'build/Ehviewer.apk'
-    jarsign: true
-    jarsignerKeystoreFile: 'text.key'
-    jarsignerKeystorePassword: '123456'
-    jarsignerKeystoreAlias: '1234'
-    jarsignerKeyPassword: '123456'
-    zipalign: true
+    contents: 'app/build/outputs/apk/**/*.apk'
+    targetFolder: '$(Build.ArtifactStagingDirectory)'
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    pathToPublish: '$(Build.ArtifactStagingDirectory)'
+    artifactName: 'apk'

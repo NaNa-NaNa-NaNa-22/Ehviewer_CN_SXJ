@@ -451,7 +451,6 @@ public class Settings {
 
     public static final String KEY_DETAIL_SIZE = "detail_size";
     private static final int DEFAULT_DETAIL_SIZE = 0;
-
     public static int getDetailSize() {
         return getIntFromStr(KEY_DETAIL_SIZE, DEFAULT_DETAIL_SIZE);
     }
@@ -813,6 +812,20 @@ public class Settings {
 
     public static final String KEY_MEDIA_SCAN = "media_scan";
     private static final boolean DEFAULT_MEDIA_SCAN = false;
+
+    /**
+     * 是否已经引导过用户去开启「所有文件访问权限」。
+     * 用来避免每次冷启动都弹一次系统设置页。
+     */
+    private static final String KEY_ASKED_ALL_FILES_ACCESS = "asked_all_files_access";
+
+    public static boolean getAskedAllFilesAccess() {
+        return getBoolean(KEY_ASKED_ALL_FILES_ACCESS, false);
+    }
+
+    public static void putAskedAllFilesAccess(boolean value) {
+        putBoolean(KEY_ASKED_ALL_FILES_ACCESS, value);
+    }
 
     public static boolean getMediaScan() {
         return getBoolean(KEY_MEDIA_SCAN, DEFAULT_MEDIA_SCAN);
@@ -1499,6 +1512,13 @@ public class Settings {
         putBoolean(KEY_DOWNLOAD_ORDER_ASC, value);
     }
 
+    public static final String KEY_DOWNLOAD_LIST_THUMB_SIZE = "download_list_thumb_size";
+    private static final int DEFAULT_DOWNLOAD_LIST_THUMB_SIZE = 2;
+
+    public static int getDownloadListThumbSize() {
+        return getIntFromStr(KEY_DOWNLOAD_LIST_THUMB_SIZE, DEFAULT_DOWNLOAD_LIST_THUMB_SIZE);
+    }
+
     public static final String KEY_DOWNLOAD_LIST_PAGINATION = "download_list_pagination";
 
     private static boolean IS_DOWNLOAD_LIST_PAGINATION = true;
@@ -1526,7 +1546,7 @@ public class Settings {
     public static final String KEY_DRAG_DOWNLOAD_GALLERY = "drag_download_gallery";
 
     public static boolean getDragDownloadGallery() {
-        boolean IS_ENABLE_DRAG_DOWNLOAD_GALLERY = false;
+        boolean IS_ENABLE_DRAG_DOWNLOAD_GALLERY = true;
         return getBoolean(KEY_DRAG_DOWNLOAD_GALLERY, IS_ENABLE_DRAG_DOWNLOAD_GALLERY) ;
     }
 

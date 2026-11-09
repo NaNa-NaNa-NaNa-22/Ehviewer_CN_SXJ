@@ -23,8 +23,7 @@ import com.hippo.util.IoThreadPoolExecutor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.BufferedSource
-import okio.buffer
-import okio.source
+import okio.Okio
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -117,7 +116,7 @@ class AppUpdater(private val name: String, source: BufferedSource) {
                     // Read current AppUpdater
                     if (instance == null && dataFile.exists()) {
                         try {
-                            dataFile.source().buffer().use { source ->
+                            Okio.buffer(Okio.source(dataFile)).use { source ->
                                 instance = AppUpdater(dataName, source)
                             }
                         } catch (e: IOException) {
@@ -171,7 +170,7 @@ class AppUpdater(private val name: String, source: BufferedSource) {
 
                     // Read new AppUpdater
                     try {
-                        dataFile.source().buffer().use { source ->
+                        Okio.buffer(Okio.source(dataFile)).use { source ->
                             instance = AppUpdater(dataName, source)
                         }
                     } catch (e: IOException) {

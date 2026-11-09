@@ -134,11 +134,14 @@ class DownloadPaginationController(private val mHost: Host) {
             if (data != null) {
                 val info = data.getParcelableExtra<GalleryInfo?>("info")
 
-                // Check if this is an imported archive - skip SpiderInfo processing
+                // Check if this is an imported archive / local album - skip SpiderInfo processing。
+                // 旧版本导入的本地相册有复制副本，仍然走 SpiderInfo（阅读进度要能记）。
                 var isImportedArchive = false
                 if (info is DownloadInfo) {
                     isImportedArchive = info.archiveUri != null &&
-                            info.archiveUri.startsWith("content://")
+                            (info.archiveUri.startsWith("content://") ||
+                                    (info.archiveUri.startsWith(DownloadAlbumImporter.URI_PREFIX) &&
+                                            !DownloadAlbumImporter.hasLocalCopy(info)))
                 }
 
                 if (!isImportedArchive && info != null) {
